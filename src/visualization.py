@@ -7,7 +7,6 @@ import numpy as np
 import pandas as pd
 from mpl_toolkits.mplot3d import Axes3D
 
-# Configuration du style
 plt.style.use('seaborn-v0_8')
 sns.set_palette("husl")
 
@@ -29,11 +28,9 @@ def show3d_plot(dataframe, x_col, y_col, z_col, label_col='attack_type',
     fig = plt.figure(figsize=figsize)
     ax = fig.add_subplot(111, projection='3d')
     
-    # Obtenir les classes uniques
     unique_labels = dataframe[label_col].unique()
     colors = plt.cm.tab10(np.linspace(0, 1, len(unique_labels)))
     
-    # Tracer chaque classe
     for i, label in enumerate(unique_labels):
         mask = dataframe[label_col] == label
         ax.scatter(
@@ -74,14 +71,11 @@ def show3d_attacks_only(dataframe, x_col, y_col, z_col, label_col='attack_type',
     fig = plt.figure(figsize=figsize)
     ax = fig.add_subplot(111, projection='3d')
     
-    # Filtrer seulement les attaques
     attacks_df = dataframe[dataframe[label_col] != benign_label]
     
-    # Obtenir les types d'attaques uniques
     unique_attacks = attacks_df[label_col].unique()
     colors = plt.cm.Set3(np.linspace(0, 1, len(unique_attacks)))
     
-    # Tracer chaque type d'attaque
     for i, attack_type in enumerate(unique_attacks):
         mask = attacks_df[label_col] == attack_type
         ax.scatter(
@@ -120,7 +114,6 @@ def show3d_outliers_only(dataframe, x_col, y_col, z_col, outlier_col='outliers',
     fig = plt.figure(figsize=figsize)
     ax = fig.add_subplot(111, projection='3d')
     
-    # Filtrer seulement les outliers
     outliers_df = dataframe[dataframe[outlier_col] == -1]
     
     ax.scatter(
@@ -162,7 +155,6 @@ def plot_class_distribution(dataframe, label_col='attack_type', figsize=(10, 6))
     ax.set_title('Distribution des classes dans le dataset')
     ax.tick_params(axis='x', rotation=45)
     
-    # Ajouter les valeurs sur les barres
     for bar in bars:
         height = bar.get_height()
         ax.text(bar.get_x() + bar.get_width()/2., height,
@@ -205,7 +197,6 @@ def plot_metrics_comparison(metrics_df, figsize=(12, 6)):
     """
     fig, axes = plt.subplots(1, 2, figsize=figsize)
     
-    # Métriques principales
     metrics_to_plot = ['Precision', 'Recall', 'F1-Score', 'Accuracy', 'Balanced Accuracy', 'MCC']
     available_metrics = [m for m in metrics_to_plot if m in metrics_df.columns]
     
@@ -224,7 +215,6 @@ def plot_metrics_comparison(metrics_df, figsize=(12, 6)):
     axes[0].legend()
     axes[0].grid(axis='y', alpha=0.3)
     
-    # AUPRC et ROC-AUC si disponibles
     auc_metrics = ['AUPRC', 'ROC-AUC']
     available_auc = [m for m in auc_metrics if m in metrics_df.columns]
     
@@ -260,13 +250,11 @@ def plot_feature_importance(feature_names, importances, top_n=20, figsize=(10, 8
         top_n: Nombre de features à afficher
         figsize: Taille de la figure
     """
-    # Créer un DataFrame pour faciliter le tri
     importance_df = pd.DataFrame({
         'feature': feature_names,
         'importance': importances
     }).sort_values('importance', ascending=False)
     
-    # Prendre les top N
     top_features = importance_df.head(top_n)
     
     fig, ax = plt.subplots(figsize=figsize)

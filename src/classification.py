@@ -23,7 +23,7 @@ class ClassificationModels:
     def __init__(self):
         self.models = {}
         self.scalers = {}
-        self.label_encoders = {}  # Pour encoder les labels textuels en numériques
+        self.label_encoders = {}
         self.feature_names = None
         
     def train_xgboost(self, X_train, y_train, X_test=None, y_test=None, **kwargs):
@@ -45,11 +45,9 @@ class ClassificationModels:
         if y_test is not None and isinstance(y_test, pd.Series):
             y_test = y_test.values
         
-        # Encoder les labels si ce sont des strings
         y_train_encoded = y_train.copy()
         y_test_encoded = y_test.copy() if y_test is not None else None
         
-        # Vérifier si les labels sont textuels
         is_textual = (len(y_train) > 0 and isinstance(y_train[0], str)) or \
                      (hasattr(y_train, 'dtype') and y_train.dtype == 'object')
         
@@ -60,31 +58,24 @@ class ClassificationModels:
             
             if y_test is not None:
                 y_test_encoded = label_encoder.transform(y_test)
-        
-        # S'assurer que les labels sont des entiers et commencent à 0 (requis par XGBoost)
         y_train_encoded = np.asarray(y_train_encoded, dtype=np.int32)
         if y_test_encoded is not None:
             y_test_encoded = np.asarray(y_test_encoded, dtype=np.int32)
         
-        # Vérifier que les labels commencent à 0
         if len(np.unique(y_train_encoded)) > 0:
             min_label = np.min(y_train_encoded)
             if min_label != 0:
                 y_train_encoded = y_train_encoded - min_label
                 if y_test_encoded is not None:
                     y_test_encoded = y_test_encoded - min_label
-        
-        # Déterminer si c'est multi-classes ou binaire
         n_classes = len(np.unique(y_train_encoded))
         is_multiclass = n_classes > 2
-        
-        # Choisir la métrique appropriée
         if is_multiclass:
-            eval_metric = 'mlogloss'  # Pour multi-classes
-            objective = 'multi:softprob'  # Pour multi-classes avec probabilités
+            eval_metric = 'mlogloss'
+            objective = 'multi:softprob'
         else:
-            eval_metric = 'logloss'  # Pour binaire
-            objective = 'binary:logistic'  # Pour binaire
+            eval_metric = 'logloss'
+            objective = 'binary:logistic'
         
         default_params = {
             'random_state': 42,
@@ -148,7 +139,6 @@ class ClassificationModels:
         Returns:
             Modèle entraîné
         """
-        # Encoder les labels si ce sont des strings
         y_train_encoded = y_train.copy()
         
         if y_train.dtype == 'object' or isinstance(y_train.iloc[0] if hasattr(y_train, 'iloc') else y_train[0], str):
@@ -157,14 +147,12 @@ class ClassificationModels:
             self.label_encoders['SVM'] = label_encoder
         
         if use_linear:
-            # Utiliser LinearSVC pour la vitesse (beaucoup plus rapide)
             default_params = {
                 'random_state': 42,
                 'C': 1.0,
                 'max_iter': 1000,
-                'dual': False  # dual=False est plus rapide pour n_samples > n_features
+                'dual': False
             }
-            # Filtrer les paramètres non valides pour LinearSVC (kernel, probability, gamma, etc.)
             linear_svc_params = ['C', 'dual', 'fit_intercept', 'intercept_scaling', 
                                 'loss', 'max_iter', 'multi_class', 'penalty', 
                                 'random_state', 'tol', 'verbose']
@@ -173,7 +161,6 @@ class ClassificationModels:
             
             model = LinearSVC(**default_params)
         else:
-            # Utiliser SVC avec kernel RBF (plus lent mais plus flexible)
             default_params = {
                 'random_state': 42,
                 'kernel': 'rbf',
@@ -280,56 +267,42 @@ class ClassificationModels:
             raise ValueError(f"Modèle {model_name} non trouvé")
         
         model = self.models[model_name]
-        
-        # Appliquer le scaler si nécessaire
         if model_name in self.scalers:
             X = self.scalers[model_name].transform(X)
         
         y_pred = model.predict(X)
         
-        # Décoder les prédictions si un label encoder existe (pour avoir le même format que les vraies labels)
         if model_name in self.label_encoders:
             try:
-                # S'assurer que y_pred est un array numpy d'entiers
                 y_pred_int = np.asarray(y_pred, dtype=np.int32)
                 y_pred = self.label_encoders[model_name].inverse_transform(y_pred_int)
             except Exception as e:
-                # Si le décodage échoue, garder les prédictions numériques
                 print(f"Warning: Impossible de décoder les prédictions: {e}")
                 pass
         
         if return_proba:
-            # LinearSVC n'a pas predict_proba, utiliser decision_function
             if isinstance(model, LinearSVC):
-                # Utiliser decision_function et convertir en probabilités avec sigmoid
                 try:
                     from scipy.special import expit
                     decision_scores = model.decision_function(X)
-                    # Convertir en probabilités pour classification binaire
-                    if len(decision_scores.shape) == 1:  # Binary classification
+                    if len(decision_scores.shape) == 1:
                         y_proba = expit(decision_scores)
-                    else:  # Multi-class
-                        # Pour multi-class, utiliser softmax
+                    else:
                         from scipy.special import softmax
                         y_proba = softmax(decision_scores, axis=1)
-                        # Retourner les probabilités de la classe positive (dernière colonne)
                         if y_proba.shape[1] == 2:
                             y_proba = y_proba[:, 1]
                 except ImportError:
-                    # Si scipy n'est pas disponible, utiliser une approximation simple
                     decision_scores = model.decision_function(X)
                     if len(decision_scores.shape) == 1:
-                        # Approximation sigmoid simple
                         y_proba = 1 / (1 + np.exp(-decision_scores))
                     else:
-                        # Approximation softmax simple
                         exp_scores = np.exp(decision_scores - np.max(decision_scores, axis=1, keepdims=True))
                         y_proba = exp_scores / np.sum(exp_scores, axis=1, keepdims=True)
                         if y_proba.shape[1] == 2:
                             y_proba = y_proba[:, 1]
             else:
                 y_proba = model.predict_proba(X)
-                # Pour la classification binaire, retourner les probabilités de la classe positive
                 if y_proba.shape[1] == 2:
                     y_proba = y_proba[:, 1]
             return y_pred, y_proba
@@ -354,7 +327,6 @@ class ClassificationModels:
         if hasattr(model, 'feature_importances_'):
             return model.feature_importances_
         elif hasattr(model, 'coef_'):
-            # Pour SVM et Logistic Regression, utiliser les coefficients
             return np.abs(model.coef_[0])
         else:
             return None

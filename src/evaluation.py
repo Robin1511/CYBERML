@@ -31,100 +31,77 @@ def calculate_all_metrics(y_true, y_pred, y_pred_proba=None, average='binary'):
     Returns:
         Dictionnaire avec toutes les métriques
     """
-    # Convertir en numpy arrays si nécessaire
     if isinstance(y_true, pd.Series):
         y_true = y_true.values
     if isinstance(y_pred, pd.Series):
         y_pred = y_pred.values
     
-    # Convertir en arrays numpy
     y_true = np.asarray(y_true)
     y_pred = np.asarray(y_pred)
     
-    # Vérifier les types et encoder si nécessaire
     y_true_encoded = y_true.copy()
     y_pred_encoded = y_pred.copy()
     
     if len(y_true) > 0 and len(y_pred) > 0:
-        # Vérifier si les éléments sont des strings
         y_true_is_str = isinstance(y_true[0], str) or (hasattr(y_true, 'dtype') and y_true.dtype == 'object')
         y_pred_is_str = isinstance(y_pred[0], str) or (hasattr(y_pred, 'dtype') and y_pred.dtype == 'object')
         
-        # Vérifier si les éléments sont numériques
         y_true_is_num = isinstance(y_true[0], (int, np.integer, float, np.floating))
         y_pred_is_num = isinstance(y_pred[0], (int, np.integer, float, np.floating))
         
-        # Si les deux sont textuels, encoder les deux
         if y_true_is_str and y_pred_is_str:
             le = LabelEncoder()
-            # Fit sur la combinaison des deux pour avoir tous les labels
             all_labels = np.concatenate([y_true, y_pred])
             le.fit(all_labels)
             y_true_encoded = le.transform(y_true)
             y_pred_encoded = le.transform(y_pred)
         
-        # Si y_true est textuel mais y_pred est numérique
         elif y_true_is_str and y_pred_is_num:
             le = LabelEncoder()
             le.fit(y_true)
             y_true_encoded = le.transform(y_true)
-            # Convertir y_pred en entiers et vérifier la correspondance
             y_pred_int = y_pred.astype(np.int32)
-            # S'assurer que les valeurs sont dans la plage valide
             unique_true_encoded = np.unique(y_true_encoded)
             min_true = np.min(unique_true_encoded)
             max_true = np.max(unique_true_encoded)
-            # Ajuster y_pred pour qu'il soit dans la même plage
             y_pred_min = np.min(y_pred_int)
             if y_pred_min != min_true:
                 y_pred_encoded = y_pred_int - y_pred_min + min_true
             else:
                 y_pred_encoded = y_pred_int
-            # Clipper pour être sûr
             y_pred_encoded = np.clip(y_pred_encoded, min_true, max_true)
         
-        # Si y_pred est textuel mais y_true est numérique
         elif y_pred_is_str and y_true_is_num:
             le = LabelEncoder()
             le.fit(y_pred)
             y_pred_encoded = le.transform(y_pred)
             y_true_encoded = y_true.astype(np.int32)
         
-        # Si les deux sont numériques
         else:
             y_true_encoded = y_true.astype(np.int32)
             y_pred_encoded = y_pred.astype(np.int32)
     
     metrics = {}
     
-    # Confusion matrix
     metrics['confusion_matrix'] = confusion_matrix(y_true_encoded, y_pred_encoded)
     
-    # Precision
     metrics['precision'] = precision_score(y_true_encoded, y_pred_encoded, average=average, zero_division=0)
     
-    # Recall
     metrics['recall'] = recall_score(y_true_encoded, y_pred_encoded, average=average, zero_division=0)
     
-    # F1-score
     metrics['f1_score'] = f1_score(y_true_encoded, y_pred_encoded, average=average, zero_division=0)
     
-    # Accuracy
     metrics['accuracy'] = accuracy_score(y_true_encoded, y_pred_encoded)
     
-    # Balanced accuracy
     metrics['balanced_accuracy'] = balanced_accuracy_score(y_true_encoded, y_pred_encoded)
     
-    # Matthews Correlation Coefficient
     metrics['mcc'] = matthews_corrcoef(y_true_encoded, y_pred_encoded)
     
-    # AUPRC (Area Under Precision-Recall Curve)
     if y_pred_proba is not None:
         try:
             if average == 'binary':
                 metrics['auprc'] = average_precision_score(y_true, y_pred_proba)
             else:
-                # Pour multi-classes, calculer la moyenne macro
                 metrics['auprc'] = average_precision_score(
                     y_true, y_pred_proba, average='macro'
                 )
@@ -134,13 +111,11 @@ def calculate_all_metrics(y_true, y_pred, y_pred_proba=None, average='binary'):
     else:
         metrics['auprc'] = None
     
-    # ROC-AUC (bonus)
     if y_pred_proba is not None:
         try:
             if average == 'binary':
                 metrics['roc_auc'] = roc_auc_score(y_true, y_pred_proba)
             else:
-                # Pour multi-classes, utiliser 'ovr' ou 'ovo'
                 metrics['roc_auc'] = roc_auc_score(
                     y_true, y_pred_proba, average='macro', multi_class='ovr'
                 )

@@ -25,7 +25,6 @@ def fgsm_attack(model, X, y, epsilon=0.01, scale=True, scaler=None):
     """
     X = X.copy()
     
-    # Normaliser si nécessaire
     if scale:
         if scaler is None:
             scaler = StandardScaler()
@@ -35,39 +34,28 @@ def fgsm_attack(model, X, y, epsilon=0.01, scale=True, scaler=None):
     else:
         X_scaled = X.copy()
     
-    # Convertir en numpy array si nécessaire
     if isinstance(X_scaled, pd.DataFrame):
         X_scaled = X_scaled.values
     
-    # Calculer le gradient
-    # Pour simplifier, on utilise une approximation numérique
     X_scaled = X_scaled.astype(np.float32)
     X_scaled.requires_grad = True
     
-    # Obtenir les prédictions
     try:
         y_pred_proba = model.predict_proba(X_scaled)
     except:
-        # Si le modèle n'a pas predict_proba, utiliser predict
         y_pred = model.predict(X_scaled)
-        # Créer des probabilités artificielles
         y_pred_proba = np.zeros((len(y_pred), 2))
         y_pred_proba[np.arange(len(y_pred)), y_pred] = 1.0
     
-    # Calculer la perte (cross-entropy)
     y_one_hot = np.zeros_like(y_pred_proba)
     y_one_hot[np.arange(len(y)), y] = 1.0
     
     loss = -np.sum(y_one_hot * np.log(y_pred_proba + 1e-10), axis=1)
-    
-    # Approximation du gradient par différence finie
     X_adversarial_scaled = X_scaled.copy()
     for i in range(len(X_scaled)):
-        # Perturbation basée sur le signe du gradient approximé
         perturbation = epsilon * np.sign(X_scaled[i] - X_scaled[i].mean())
         X_adversarial_scaled[i] = X_scaled[i] + perturbation
     
-    # Dénormaliser si nécessaire
     if scale and scaler is not None:
         X_adversarial = scaler.inverse_transform(X_adversarial_scaled)
     else:
@@ -94,8 +82,6 @@ def pgd_attack(model, X, y, epsilon=0.01, alpha=0.001, num_iter=10, scale=True, 
         X_adversarial: Features adversaires
     """
     X = X.copy()
-    
-    # Normaliser si nécessaire
     if scale:
         if scaler is None:
             scaler = StandardScaler()
@@ -110,27 +96,20 @@ def pgd_attack(model, X, y, epsilon=0.01, alpha=0.001, num_iter=10, scale=True, 
     
     X_adversarial_scaled = X_scaled.copy().astype(np.float32)
     
-    # Itérations PGD
     for _ in range(num_iter):
-        # Obtenir les prédictions
         try:
             y_pred_proba = model.predict_proba(X_adversarial_scaled)
         except:
             y_pred = model.predict(X_adversarial_scaled)
             y_pred_proba = np.zeros((len(y_pred), 2))
             y_pred_proba[np.arange(len(y_pred)), y_pred] = 1.0
-        
-        # Calculer la perturbation
         perturbation = alpha * np.sign(X_adversarial_scaled - X_scaled)
         X_adversarial_scaled = X_adversarial_scaled + perturbation
         
-        # Projeter dans la boule epsilon
         delta = X_adversarial_scaled - X_scaled
         delta_norm = np.linalg.norm(delta, axis=1, keepdims=True)
         delta = delta / (delta_norm + 1e-10) * np.minimum(delta_norm, epsilon)
         X_adversarial_scaled = X_scaled + delta
-    
-    # Dénormaliser si nécessaire
     if scale and scaler is not None:
         X_adversarial = scaler.inverse_transform(X_adversarial_scaled)
     else:
@@ -154,7 +133,6 @@ def evaluate_adversarial_attack(model, X_original, X_adversarial, y_true, scale=
     Returns:
         Dictionnaire avec les métriques d'évaluation
     """
-    # Prédictions sur les données originales
     if scale and scaler is not None:
         X_orig_scaled = scaler.transform(X_original)
     else:
@@ -163,7 +141,6 @@ def evaluate_adversarial_attack(model, X_original, X_adversarial, y_true, scale=
     y_pred_original = model.predict(X_orig_scaled)
     accuracy_original = np.mean(y_pred_original == y_true)
     
-    # Prédictions sur les données adversaires
     if scale and scaler is not None:
         X_adv_scaled = scaler.transform(X_adversarial)
     else:
@@ -172,7 +149,6 @@ def evaluate_adversarial_attack(model, X_original, X_adversarial, y_true, scale=
     y_pred_adversarial = model.predict(X_adv_scaled)
     accuracy_adversarial = np.mean(y_pred_adversarial == y_true)
     
-    # Taux de succès de l'attaque (modifications de prédiction)
     attack_success_rate = np.mean(y_pred_original != y_pred_adversarial)
     
     return {
@@ -203,23 +179,15 @@ def adversarial_training(model_class, X_train, y_train, X_val, y_val,
     Returns:
         Modèle entraîné avec adversarial training
     """
-    # Entraîner le modèle initial
     model = model_class(**model_kwargs)
     model.fit(X_train, y_train)
     
-    # Adversarial training
     for epoch in range(num_epochs):
-        # Générer des exemples adversaires
         X_adv = attack_func(model, X_train, y_train, epsilon=epsilon)
         
-        # Combiner données originales et adversaires
         X_combined = np.vstack([X_train, X_adv])
         y_combined = np.hstack([y_train, y_train])
-        
-        # Réentraîner le modèle
         model.fit(X_combined, y_combined)
-        
-        # Évaluer sur la validation
         val_acc = model.score(X_val, y_val)
         print(f"Epoch {epoch+1}/{num_epochs} - Validation Accuracy: {val_acc:.4f}")
     
