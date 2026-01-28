@@ -1,5 +1,6 @@
 """
 Module pour les attaques adversaires contre les modèles de classification (Bonus 20%)
+Version corrigée pour Scikit-Learn (Black-Box / Numerical Gradient)
 """
 import numpy as np
 import pandas as pd
@@ -7,189 +8,177 @@ from sklearn.preprocessing import StandardScaler
 import warnings
 warnings.filterwarnings('ignore')
 
-
-def fgsm_attack(model, X, y, epsilon=0.01, scale=True, scaler=None):
+def compute_numerical_gradient(model, X, y, delta=1e-2):
     """
-    Implémente l'attaque FGSM (Fast Gradient Sign Method)
-    
-    Args:
-        model: Modèle de classification entraîné (doit avoir predict_proba)
-        X: Features d'entrée
-        y: Vraies labels
-        epsilon: Magnitude de la perturbation
-        scale: Si True, utilise le scaler pour normaliser
-        scaler: Scaler pré-entraîné (si None, crée un nouveau)
-        
-    Returns:
-        X_adversarial: Features adversaires
+    Calcule une approximation du gradient par différences finies.
+    Permet d'attaquer des modèles "boîte noire" (RF, XGBoost, SVM) qui n'ont pas de gradient natif.
     """
-    X = X.copy()
+    n_samples = X.shape[0]
+    n_features = X.shape[1]
+    grad_sign = np.zeros_like(X)
     
-    if scale:
-        if scaler is None:
-            scaler = StandardScaler()
-            X_scaled = scaler.fit_transform(X)
-        else:
-            X_scaled = scaler.transform(X)
-    else:
-        X_scaled = X.copy()
-    
-    if isinstance(X_scaled, pd.DataFrame):
-        X_scaled = X_scaled.values
-    
-    X_scaled = X_scaled.astype(np.float32)
-    X_scaled.requires_grad = True
-    
+    # On récupère les probabilités de base
     try:
-        y_pred_proba = model.predict_proba(X_scaled)
-    except:
-        y_pred = model.predict(X_scaled)
-        y_pred_proba = np.zeros((len(y_pred), 2))
-        y_pred_proba[np.arange(len(y_pred)), y_pred] = 1.0
-    
-    y_one_hot = np.zeros_like(y_pred_proba)
-    y_one_hot[np.arange(len(y)), y] = 1.0
-    
-    loss = -np.sum(y_one_hot * np.log(y_pred_proba + 1e-10), axis=1)
-    X_adversarial_scaled = X_scaled.copy()
-    for i in range(len(X_scaled)):
-        perturbation = epsilon * np.sign(X_scaled[i] - X_scaled[i].mean())
-        X_adversarial_scaled[i] = X_scaled[i] + perturbation
-    
-    if scale and scaler is not None:
-        X_adversarial = scaler.inverse_transform(X_adversarial_scaled)
-    else:
-        X_adversarial = X_adversarial_scaled
-    
-    return X_adversarial
+        probs_base = model.predict_proba(X)
+        p_true_base = probs_base[np.arange(n_samples), y]
+    except AttributeError:
+        return np.sign(np.random.randn(*X.shape))
 
-
-def pgd_attack(model, X, y, epsilon=0.01, alpha=0.001, num_iter=10, scale=True, scaler=None):
-    """
-    Implémente l'attaque PGD (Projected Gradient Descent)
+    features_to_test = range(min(n_features, 50))  # Limiter le nombre de features testées pour la vitesse
     
-    Args:
-        model: Modèle de classification entraîné
-        X: Features d'entrée
-        y: Vraies labels
-        epsilon: Magnitude maximale de la perturbation
-        alpha: Taux d'apprentissage pour chaque itération
-        num_iter: Nombre d'itérations
-        scale: Si True, utilise le scaler
-        scaler: Scaler pré-entraîné
+    for i in features_to_test:
+        X_plus = X.copy()
+        X_plus[:, i] += delta
         
-    Returns:
-        X_adversarial: Features adversaires
+        probs_plus = model.predict_proba(X_plus)
+        p_true_plus = probs_plus[np.arange(n_samples), y]
+        
+        grad_sign[:, i] = np.where(p_true_plus < p_true_base, 1.0, -1.0)
+        
+    return grad_sign
+
+def fgsm_attack(model, X, y, epsilon=0.1, scale=True, scaler=None):
     """
-    X = X.copy()
+    Implémente l'attaque FGSM (Fast Gradient Sign Method) version Black-Box
+    """
+    X_input = X.copy()
+    if isinstance(X_input, pd.DataFrame):
+        X_input = X_input.values
+    
     if scale:
         if scaler is None:
             scaler = StandardScaler()
-            X_scaled = scaler.fit_transform(X)
+            X_scaled = scaler.fit_transform(X_input)
         else:
-            X_scaled = scaler.transform(X)
+            X_scaled = scaler.transform(X_input)
     else:
-        X_scaled = X.copy()
-    
-    if isinstance(X_scaled, pd.DataFrame):
-        X_scaled = X_scaled.values
-    
-    X_adversarial_scaled = X_scaled.copy().astype(np.float32)
-    
-    for _ in range(num_iter):
-        try:
-            y_pred_proba = model.predict_proba(X_adversarial_scaled)
-        except:
-            y_pred = model.predict(X_adversarial_scaled)
-            y_pred_proba = np.zeros((len(y_pred), 2))
-            y_pred_proba[np.arange(len(y_pred)), y_pred] = 1.0
-        perturbation = alpha * np.sign(X_adversarial_scaled - X_scaled)
-        X_adversarial_scaled = X_adversarial_scaled + perturbation
-        
-        delta = X_adversarial_scaled - X_scaled
-        delta_norm = np.linalg.norm(delta, axis=1, keepdims=True)
-        delta = delta / (delta_norm + 1e-10) * np.minimum(delta_norm, epsilon)
-        X_adversarial_scaled = X_scaled + delta
-    if scale and scaler is not None:
-        X_adversarial = scaler.inverse_transform(X_adversarial_scaled)
-    else:
-        X_adversarial = X_adversarial_scaled
-    
-    return X_adversarial
+        X_scaled = X_input
 
+    # Calcul du gradient approximatif
+    # (On utilise predict_proba pour estimer la direction de l'attaque)
+    perturbation = epsilon * compute_numerical_gradient(model, X_scaled, y)
+    
+    X_adv_scaled = X_scaled + perturbation
+    
+    if scale and scaler is not None:
+        X_adv = scaler.inverse_transform(X_adv_scaled)
+    else:
+        X_adv = X_adv_scaled
+    
+    if isinstance(X, pd.DataFrame):
+        return pd.DataFrame(X_adv, columns=X.columns, index=X.index)
+    return X_adv
+
+def pgd_attack(model, X, y, epsilon=0.1, alpha=0.02, num_iter=5, scale=True, scaler=None):
+    """
+    Implémente l'attaque PGD (Projected Gradient Descent) version Black-Box
+    """
+    X_input = X.copy()
+    if isinstance(X_input, pd.DataFrame):
+        X_input = X_input.values
+        
+    if scale:
+        if scaler is None:
+            scaler = StandardScaler()
+            X_curr = scaler.fit_transform(X_input)
+            scaler_used = scaler
+        else:
+            X_curr = scaler.transform(X_input)
+            scaler_used = scaler
+    else:
+        X_curr = X_input
+        scaler_used = None
+        
+    X_orig = X_curr.copy()
+
+    for _ in range(num_iter):
+        grad_sign = compute_numerical_gradient(model, X_curr, y)
+        
+        X_curr = X_curr + alpha * grad_sign
+        
+        perturbation = np.clip(X_curr - X_orig, -epsilon, epsilon)
+        X_curr = X_orig + perturbation
+        
+    if scale and scaler_used is not None:
+        X_adv = scaler_used.inverse_transform(X_curr)
+    else:
+        X_adv = X_curr
+        
+    if isinstance(X, pd.DataFrame):
+        return pd.DataFrame(X_adv, columns=X.columns, index=X.index)
+    return X_adv
 
 def evaluate_adversarial_attack(model, X_original, X_adversarial, y_true, scale=True, scaler=None):
     """
-    Évalue l'impact d'une attaque adverse sur un modèle
-    
-    Args:
-        model: Modèle à évaluer
-        X_original: Features originales
-        X_adversarial: Features adversaires
-        y_true: Vraies labels
-        scale: Si True, utilise le scaler
-        scaler: Scaler pré-entraîné
-        
-    Returns:
-        Dictionnaire avec les métriques d'évaluation
+    Évalue l'efficacité de l'attaque
     """
-    if scale and scaler is not None:
-        X_orig_scaled = scaler.transform(X_original)
+
+    if isinstance(X_original, pd.DataFrame):
+        X_orig_val = X_original.values
+        X_adv_val = X_adversarial.values
     else:
-        X_orig_scaled = X_original
-    
-    y_pred_original = model.predict(X_orig_scaled)
-    accuracy_original = np.mean(y_pred_original == y_true)
-    
+        X_orig_val = X_original
+        X_adv_val = X_adversarial
+
     if scale and scaler is not None:
-        X_adv_scaled = scaler.transform(X_adversarial)
+
+        X_orig_check = scaler.transform(X_orig_val)
+        X_adv_check = scaler.transform(X_adv_val)
     else:
-        X_adv_scaled = X_adversarial
+        X_orig_check = X_orig_val
+        X_adv_check = X_adv_val
     
-    y_pred_adversarial = model.predict(X_adv_scaled)
-    accuracy_adversarial = np.mean(y_pred_adversarial == y_true)
+    y_pred_orig = model.predict(X_orig_check)
+    y_pred_adv = model.predict(X_adv_check)
     
-    attack_success_rate = np.mean(y_pred_original != y_pred_adversarial)
+    acc_orig = np.mean(y_pred_orig == y_true)
+    acc_adv = np.mean(y_pred_adv == y_true)
+    success_rate = np.mean(y_pred_orig != y_pred_adv)
     
     return {
-        'accuracy_original': accuracy_original,
-        'accuracy_adversarial': accuracy_adversarial,
-        'accuracy_drop': accuracy_original - accuracy_adversarial,
-        'attack_success_rate': attack_success_rate
+        'accuracy_original': acc_orig,
+        'accuracy_adversarial': acc_adv,
+        'attack_success_rate': success_rate
     }
 
-
-def adversarial_training(model_class, X_train, y_train, X_val, y_val, 
-                        attack_func=fgsm_attack, epsilon=0.01, 
-                        num_epochs=5, **model_kwargs):
+def adversarial_training(model, X_train, y_train, attack_func, epsilon, n_samples=2000):
     """
-    Entraîne un modèle avec adversarial training pour améliorer sa robustesse
+    Entraîne un modèle robuste en injectant des exemples adverses.
     
     Args:
-        model_class: Classe du modèle à entraîner
-        X_train: Features d'entraînement
-        y_train: Labels d'entraînement
-        X_val: Features de validation
-        y_val: Labels de validation
-        attack_func: Fonction d'attaque à utiliser
-        epsilon: Magnitude de la perturbation
-        num_epochs: Nombre d'époques d'adversarial training
-        **model_kwargs: Arguments pour le modèle
-        
-    Returns:
-        Modèle entraîné avec adversarial training
+        model: Le modèle à ré-entraîner (ex: RandomForest)
+        X_train, y_train: Données d'entraînement
+        attack_func: La fonction d'attaque (fgsm_attack ou pgd_attack)
+        epsilon: La force de l'attaque
+        n_samples: Nombre d'exemples adverses à générer (pour ne pas être trop lent)
     """
-    model = model_class(**model_kwargs)
-    model.fit(X_train, y_train)
     
-    for epoch in range(num_epochs):
-        X_adv = attack_func(model, X_train, y_train, epsilon=epsilon)
+    if n_samples < len(X_train):
+        indices = np.random.choice(len(X_train), n_samples, replace=False)
+        if isinstance(X_train, pd.DataFrame):
+            X_subset = X_train.iloc[indices]
+            y_subset = y_train.iloc[indices] if hasattr(y_train, 'iloc') else y_train[indices]
+        else:
+            X_subset = X_train[indices]
+            y_subset = y_train[indices]
+    else:
+        X_subset = X_train
+        y_subset = y_train
+
+    print(f"Génération de {len(X_subset)} exemples adversaires...")
+    X_adv_train = attack_func(model, X_subset, y_subset, epsilon=epsilon, scale=False)
+    
+    if isinstance(X_train, pd.DataFrame):
+        X_combined = pd.concat([X_train, X_adv_train], axis=0)
+        y_combined = np.concatenate([y_train, y_subset])
+    else:
+        X_combined = np.vstack([X_train, X_adv_train])
+        y_combined = np.hstack([y_train, y_subset])
         
-        X_combined = np.vstack([X_train, X_adv])
-        y_combined = np.hstack([y_train, y_train])
-        model.fit(X_combined, y_combined)
-        val_acc = model.score(X_val, y_val)
-        print(f"Epoch {epoch+1}/{num_epochs} - Validation Accuracy: {val_acc:.4f}")
+    print(f"Taille du nouveau dataset d'entraînement : {len(X_combined)}")
+    
+    print("Ré-entraînement du modèle sur les données mixtes...")
+    model.fit(X_combined, y_combined)
+    print("Modèle robuste entraîné.")
     
     return model
-
